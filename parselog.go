@@ -17,9 +17,14 @@ import (
        "time"
        "sort"
        "encoding/json"
+       "github.com/abh/geoip"
+       "./lib"
 )
 
 const csvd string = "~"
+const geoipdb_base = "http://geolite.maxmind.com/download/geoip/database/"
+const geoipdb_basic string = "GeoIP.dat"
+const geoipdb_city string = "GeoLiteCity.dat"
 
 
 /*****************************************************/
@@ -89,15 +94,26 @@ func check(e error) {
 }
 
 
-func mapPairToCSV(colHeader string, inMap PairList, fh *os.File) int{
+func mapPairToCSV(colHeader string, inMap PairList, fh *os.File, geo *geoip.GeoIP) int{
+    
     
     nb, err := fh.WriteString(colHeader+"\n")
     check(err)
     totalBytes := nb
     i := 0
+
     for _, v1 := range inMap {
-        nb, err = fh.WriteString(v1.Key + csvd + strconv.Itoa(v1.Value)+"\n")
-        check(err)
+
+    	matches := regexp.MustCompile(`([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)`).FindStringSubmatch(v1.Key)
+    	if len(matches) >= 1 && geo != nil {
+	    	record := geo.GetRecord(v1.Key)
+		if record != nil {
+        	   nb, err = fh.WriteString(v1.Key + csvd + strconv.Itoa(v1.Value)+ csvd + record.City + csvd + record.CountryName + "\n")
+		}
+	} else {
+		nb, err = fh.WriteString(v1.Key + csvd + strconv.Itoa(v1.Value)+ "\n")
+	}
+	check(err)
         totalBytes += nb
         i++
     }
@@ -147,6 +163,33 @@ func main() {
     } else {
       ext = ".csv"
     }
+
+
+    // Attempt to update the GeoIP DB
+    //fmt.Println("Downloading "+geoipdb_base+geoipdb_city)
+    
+    // If not updated in a month, then attempt to update the GeoIP DB files
+    if tools.FileExists(geoipdb_city) == false {
+
+       if tools.Download(geoipdb_base+geoipdb_city) {
+       	  fmt.Println("Update to " +geoipdb_city + " successful")
+       } else {
+	  fmt.Println("Could not update "+geoipdb_city)
+       }            
+
+    }
+        
+
+    // Now open the GeoIP database
+    //var geo *geoip.GeoIP 
+    //if tools.FileExists(geoipdb_city) == true {
+        geo, geoErr := geoip.Open(geoipdb_city)
+    	if geoErr != nil {
+	       fmt.Printf("Warning, could not open GeoIP database: %s\n", err)
+	}
+    //} else {
+    //  fmt.Println("File doesn't exist!")
+    //}
 
 
     r := bufio.NewReader(f)
@@ -199,8 +242,10 @@ func main() {
 
     sMapIP := sortMapByValue(mapIP)
     mapIP = nil
+
     sMapURI := sortMapByValue(mapURI)
     mapURI = nil
+
     sMapUA := sortMapByValue(mapUA)    
     mapUA = nil
     
@@ -226,13 +271,13 @@ func main() {
 
     // Update each file element property
     if ext == "json" {
-       fileList[0].Size = mapPairToJson("IP"+csvd+"Hits\n", sMapIP, fileList[0].Handle)
+       fileList[0].Size = mapPairToJson("IP"+csvd+"Hits"+csvd+"City"+csvd+"Country", sMapIP, fileList[0].Handle)
     	fileList[1].Size = mapPairToJson("URI"+csvd+"Hits\n", sMapURI, fileList[1].Handle)
         fileList[2].Size = mapPairToJson("UA"+csvd+"Hits\n", sMapUA, fileList[2].Handle)
     } else {
-      fileList[0].Size = mapPairToCSV("IP"+csvd+"Hits\n", sMapIP, fileList[0].Handle)
-      fileList[1].Size = mapPairToCSV("URI"+csvd+"Hits\n", sMapURI, fileList[1].Handle)
-      fileList[2].Size = mapPairToCSV("UA"+csvd+"Hits\n", sMapUA, fileList[2].Handle)
+      fileList[0].Size = mapPairToCSV("IP"+csvd+"Hits"+csvd+"City"+csvd+"Country", sMapIP, fileList[0].Handle, geo)
+      fileList[1].Size = mapPairToCSV("URI"+csvd+"Hits", sMapURI, fileList[1].Handle, geo)
+      fileList[2].Size = mapPairToCSV("UA"+csvd+"Hits", sMapUA, fileList[2].Handle, geo)
     }
 
     numLines := (lineNum-1)
@@ -248,7 +293,8 @@ func main() {
 
     fmt.Println("Top 5 IPs\n----------------------------")
     for i := (numIp-1); i > 0; i-- {
-	fmt.Println("IP:", sMapIP[i].Key, "Hits:", sMapIP[i].Value)
+    	record := geo.GetRecord(sMapIP[i].Key)
+	fmt.Println("IP:", sMapIP[i].Key, "Hits:", sMapIP[i].Value, "Location:", record.City+", "+record.CountryName)
 	if i == (numIp-5){
 	     break	  
 	}
