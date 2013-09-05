@@ -82,6 +82,9 @@ func SortResponseTimes(sl []int) []int {
      return sl
 }
 
+func FromNanoToMilli(ts int64) int{
+     return int(ts/1000000)
+}
 
 
 const debug bool = false
@@ -126,8 +129,8 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats, w *sync
 
      defer resp.Body.Close()
      tEnd := time.Now().UnixNano()
-     
-     stats.TestTime = append(stats.TestTime, int((tEnd-tStart)/1000)) // convert to milliseconds
+          
+     stats.TestTime = append(stats.TestTime, FromNanoToMilli(tEnd-tStart)) // convert to milliseconds
      stats.TestCount++
      stats.NumPass++
  
@@ -168,7 +171,7 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats, w *sync
 func main() {
 
      var url string
-     var threads,totalTests, maxCores int
+     var threads,totalTests, maxCores, rampFactor, rampTime int
 
 
      flag.StringVar(&url, "u", "http://www.somedomain.com", "Full url to test")
@@ -176,6 +179,8 @@ func main() {
      flag.IntVar(&maxCores, "p", 1, "Number of processor cores to use")
      flag.IntVar(&totalTests, "m", 25, "Total number of tests to run")
      //flag.StringVar(&type, "t", "http", "Type of test to run (http/mc/redis/mysql)")
+     flag.IntVar(&rampFactor, "rf", 1, "The number of thread to gradually ramp up by")
+     flag.IntVar(&rampTime, "rt", 1, "The number of seconds to wait until the next ramp up")
      flag.Parse()
 
 
@@ -228,7 +233,6 @@ func main() {
 
      }
      stats.TestEnd = time.Now().UnixNano()
-
      stats.TestTime = SortResponseTimes(stats.TestTime)
 
      w.Wait()
@@ -247,10 +251,10 @@ func main() {
 
      fmt.Println("Total pass: ", stats.NumPass)
      fmt.Println("Total fail: ", stats.NumFail)
-     fmt.Println("Shortest time: ", 1)
-     fmt.Println("Longest time: ", 1000)
+     fmt.Println("Shortest time: ", stats.TestTime[0], "ms")
+     fmt.Println("Longest time: ", stats.TestTime[len(stats.TestTime)-1], "ms")
 
-     var median int
+     var median,avg int
      if totalTests%2==1 {
      	var index int = int(math.Ceil(float64(len(stats.TestTime)/2)))  
      	median = int( stats.TestTime[index] )
@@ -259,7 +263,16 @@ func main() {
        median = (stats.TestTime[index]+stats.TestTime[index+1])/2
      }
     
+
+    for i := 0; i < len(stats.TestTime); i++ {
+    	avg += stats.TestTime[i]
+    }
+    avg = int(avg/stats.TestCount)
+    
+
      fmt.Println("Median time: ", median, "ms")
+     fmt.Println("Avg. time:", avg, "ms")
+
 
      fmt.Println("")
      fmt.Println(stats.TestTime)
