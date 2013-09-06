@@ -12,7 +12,7 @@ import(
 	"flag"
 	"time"
 	"sync"
-	"strconv"
+	//"strconv"
 	"runtime"
 	"sort"
 	"math"
@@ -42,6 +42,7 @@ type BenchStats struct{
      TestCount int
      TotalTime int64
      TestTime []int
+     StatusCode map[string]int
      TestStart int64
      TestEnd int64
      NumFail int
@@ -120,6 +121,19 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats, w *sync
      tStart := time.Now().UnixNano()
      resp, _ := client.Do(req)     
 
+      switch {
+            case resp.StatusCode >= 200 && resp.StatusCode < 300:
+                    stats.StatusCode["2xx"]++
+            case resp.StatusCode >= 300 && resp.StatusCode < 400:
+                    stats.StatusCode["3xx"]++
+            case resp.StatusCode >= 400 && resp.StatusCode < 500:
+                    stats.StatusCode["4xx"]++
+            case resp.StatusCode >= 500:
+                    stats.StatusCode["5xx"]++
+        }
+
+
+
      if resp.StatusCode != 200 {
      	stats.TestTime = append(stats.TestTime, 0)
 	stats.TestCount++
@@ -133,7 +147,7 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats, w *sync
      stats.TestTime = append(stats.TestTime, FromNanoToMilli(tEnd-tStart)) // convert to milliseconds
      stats.TestCount++
      stats.NumPass++
- 
+
 
 	if resp.Header.Get("Server") != "" {
 	   stats.ServerType = resp.Header.Get("Server")
@@ -172,6 +186,7 @@ func main() {
 
      var url string
      var threads,totalTests, maxCores, rampFactor, rampTime int
+     var once [4]sync.Once //oncePN25, oncePN50, oncePN75, oncePN100 sync.Once
 
 
      flag.StringVar(&url, "u", "http://www.somedomain.com", "Full url to test")
@@ -185,64 +200,68 @@ func main() {
 
 
      if maxCores > runtime.NumCPU() {
-      	fmt.Println("Using "+strconv.Itoa(runtime.NumCPU())+" cores")
      	runtime.GOMAXPROCS(runtime.NumCPU())
      } else {
-        fmt.Println("Using "+strconv.Itoa(maxCores)+" cores")
         runtime.GOMAXPROCS(maxCores)
      }
 
      //postDataFile := flag.String("d", "postdata.txt", "The filename of the POST data to send")
 
-     fmt.Println("-----------------------------------------------------")
-     fmt.Println("Requesting " + url + " a max of " + strconv.Itoa(totalTests)+" times")
-
-
+     fmt.Println("\nRunning tests on "+url)
+     
      
      options.TotalTests = totalTests
      options.Concurency = threads
 
-     stats := BenchStats{TestStart: time.Now().UnixNano(), BytesDownloaded: 0, ServerType: ""}     
+     statusCodes := map[string]int{"2xx":0,"3xx":0,"4xx":0,"5xx":0}
+     stats := BenchStats{TestStart: time.Now().UnixNano(), BytesDownloaded: 0, ServerType: "", StatusCode: statusCodes}     
 
-     
-     //signalComplete := make(chan bool)
 
      var w sync.WaitGroup
-     //w.Add(totalTests)
-
-
      i := totalTests
      w.Add(totalTests)
-     for i > 0 {
+
+     for {
      	 for j := 0; j < threads; j++ {	
+
+	     progress := (stats.TestCount*100)/totalTests
+                    switch {
+                       case progress >= 25 && progress < 50:
+                            once[0].Do(func() { fmt.Println("25% Completed..") })
+                       case progress >= 50 && progress < 75:
+                            once[1].Do(func() { fmt.Println("50% Completed..") })
+                       case progress >= 75 && progress < 100:
+                            once[2].Do(func() { fmt.Println("75% Completed..") })           
+                    }
+
 	    if i < 1 {
-	       break
+	      once[3].Do(func() { fmt.Println("100% Completed..") })
+	      goto breakout
 	    }
 	    go makeRequest(url, &options, &stats, &w)	    
      	    i--
 	 } 
 	 	 
-	 fmt.Println(stats.TestCount, "Tests completed")
-
 	 if options.TimeBetween > 0 {
 	    //time.Sleep(int64(options.TimeBetween) * int64(time.Millisecond))
 	    //time.Sleep(options.TimeBetween * (1000*1000))
 	    time.Sleep(1000 * time.Millisecond)
 	 } 
-
+	 
 
      }
+     breakout:
+
+
      stats.TestEnd = time.Now().UnixNano()
      stats.TestTime = SortResponseTimes(stats.TestTime)
 
      w.Wait()
-     //<-signalComplete
 
-     // Clear screen
-     //fmt.Println("\x0c\n")
 
-     //time.Sleep(12 * 1e9)
-     fmt.Println("-------------- Test Statistics ---------------")
+     fmt.Println("\n-------------- Test Statistics ---------------")
+     fmt.Println("Num CPU cores used:", maxCores)
+     fmt.Println("URL Requested: " + url)
      fmt.Println("Server type: ", stats.ServerType)
      fmt.Println("Total tests run: ", stats.TestCount)
      if stats.BytesDownloaded > 0 {
@@ -251,6 +270,11 @@ func main() {
 
      fmt.Println("Total pass: ", stats.NumPass)
      fmt.Println("Total fail: ", stats.NumFail)
+     fmt.Println("Total responses in 2xx:", stats.StatusCode["2xx"])
+     fmt.Println("Total responses in 3xx:", stats.StatusCode["3xx"])
+     fmt.Println("Total responses in 4xx:", stats.StatusCode["4xx"])
+     fmt.Println("Total responses in 5xx:", stats.StatusCode["5xx"])
+
      fmt.Println("Shortest time: ", stats.TestTime[0], "ms")
      fmt.Println("Longest time: ", stats.TestTime[len(stats.TestTime)-1], "ms")
 
@@ -275,15 +299,11 @@ func main() {
 
 
      fmt.Println("")
-     fmt.Println(stats.TestTime)
-
 
      //fmt.Println("Test start: ", (stats.TestStart%1e6)/1e3)
      //fmt.Println("Test end: ", (stats.TestEnd%1e6)/1e3)
      //fmt.Println("Total time taken: ", ((stats.TestEnd-stats.TestStart)%1e6)/1e3)
-
-
-     fmt.Println()
+     fmt.Println("")
 
 
 }
