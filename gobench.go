@@ -4,9 +4,10 @@ package main
 import(
 	"fmt"
 	"net/http"
+	"strconv"
 	//"os"
 	//"http"
-	//"io/ioutil"
+	"io/ioutil"
 	//"url"
 	//"runtime"
 	"flag"
@@ -47,36 +48,9 @@ type BenchStats struct{
      TestEnd int64
      NumFail int
      NumPass int
-     BytesDownloaded int64
+     BytesDownloaded int
      ServerType string
 }
-
-
-/*
-type Int64Slice []int64
-
-func (a Int64Slice) Len() int { 
-     return len(a) 
-}
-
-func (a Int64Slice) Swap(i, j int) { 
-     a[i], a[j] = a[j], a[i] 
-}
-
-func (a Int64Slice) Less(i, j int) bool { 
-     return a[i] < a[j] 
-}
-
-func SortResponseTimes(sl []int64) Int64Slice {
-     sLen := len(sl)
-     s := make(Int64Slice, sLen)
-     for i := 0; i < sLen; i++ {
-     	 s[i] = sl[i]
-     }
-     sort.Sort(s)
-     return s
-}
-*/
 
 func SortResponseTimes(sl []int) []int {
      sort.Sort(sort.IntSlice(sl))
@@ -99,8 +73,6 @@ var options = BenchOptions{
     TotalTests: 30,
 }
 
-//var signalComplete chan bool
-
 
 func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *sync.WaitGroup) {
 
@@ -121,8 +93,9 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
      tStart := time.Now().UnixNano()
      resp, _ := client.Do(req)     
 
-     
 
+     body, _ := ioutil.ReadAll(resp.Body)
+     stats.BytesDownloaded += len(body)
 
       switch {
             case resp.StatusCode >= 200 && resp.StatusCode < 300:
@@ -156,14 +129,6 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
 	   stats.ServerType = resp.Header.Get("Server")
 	}
  
-	/*
-     if resp.Header.Get("Content-Encoding") != "gzip" { 
-     	stats.BytesDownloaded += resp.ContentLength
-     } else {
-       fmt.Println("using gzip encoding for return data!")
-     }
-     */
-
      //fmt.Println(resp.Header)
 
      //fmt.Println("Status Code:", resp.StatusCode)
@@ -263,7 +228,7 @@ func main() {
      fmt.Println("Server type: ", stats.ServerType)
      fmt.Println("Total tests run: ", stats.TestCount)
      if stats.BytesDownloaded > 0 {
-          fmt.Println("Total bytes downloaded: ", stats.BytesDownloaded)
+          fmt.Println("Total bytes downloaded: ", stats.BytesDownloaded, "("+strconv.Itoa((stats.BytesDownloaded/1024))+" KB)")
      }
 
      fmt.Println("Total pass: ", stats.NumPass)
