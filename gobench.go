@@ -102,7 +102,7 @@ var options = BenchOptions{
 //var signalComplete chan bool
 
 
-func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats, w *sync.WaitGroup) {
+func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *sync.WaitGroup) {
 
 
      client := &http.Client{}     
@@ -120,6 +120,9 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats, w *sync
 
      tStart := time.Now().UnixNano()
      resp, _ := client.Do(req)     
+
+     
+
 
       switch {
             case resp.StatusCode >= 200 && resp.StatusCode < 300:
@@ -172,11 +175,6 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats, w *sync
      	fmt.Println("\tRequest took ", (tEnd-tStart), "ns to run")
      }
 
-     w.Done()
-
-
-     //signalComplete <- true    
-
 }
 
 
@@ -217,9 +215,8 @@ func main() {
      stats := BenchStats{TestStart: time.Now().UnixNano(), BytesDownloaded: 0, ServerType: "", StatusCode: statusCodes}     
 
 
-     var w sync.WaitGroup
      i := totalTests
-     w.Add(totalTests)
+     done := make(chan bool, totalTests)
 
      for {
      	 for j := 0; j < threads; j++ {	
@@ -238,7 +235,10 @@ func main() {
 	      once[3].Do(func() { fmt.Println("100% Completed..") })
 	      goto breakout
 	    }
-	    go makeRequest(url, &options, &stats, &w)	    
+	    go func() { 
+	       makeRequest(url, &options, &stats)
+	       done <- true   
+	    }()	    
      	    i--
 	 } 
 	 	 
@@ -255,8 +255,6 @@ func main() {
 
      stats.TestEnd = time.Now().UnixNano()
      stats.TestTime = SortResponseTimes(stats.TestTime)
-
-     w.Wait()
 
 
      fmt.Println("\n-------------- Test Statistics ---------------")
@@ -305,5 +303,7 @@ func main() {
      //fmt.Println("Total time taken: ", ((stats.TestEnd-stats.TestStart)%1e6)/1e3)
      fmt.Println("")
 
+
+     <- done
 
 }
