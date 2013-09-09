@@ -3,9 +3,10 @@ package main
 
 import(
 	"fmt"
+	"net/url"
 	"net/http"
 	"strconv"
-	//"os"
+	"os"
 	//"http"
 	"io/ioutil"
 	//"url"
@@ -17,6 +18,8 @@ import(
 	"runtime"
 	"sort"
 	"math"
+	"strings"
+	"bufio"
 )
 
 
@@ -74,8 +77,35 @@ var options = BenchOptions{
 }
 
 
-func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *sync.WaitGroup) {
+func loadPostData(inFile string) map[string]string {
 
+
+     var pd map[string]string
+
+
+     fh, err := os.Open(inFile)
+     r := bufio.NewReader(fh)
+     s, e := Readln(r)
+
+     if e == nil {
+
+     	s, e = Readln(r)
+
+	parts := strings.SplitN(s, "=", 2)
+	fmt.Println(len(parts))
+	fmt.Println(parts)
+	if len(parts) == 2 {
+	    pd[parts[0]] = pd[parts[1]]	     
+	}
+	return pd
+     } 
+
+     return nil
+     
+}
+
+
+func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *sync.WaitGroup) {
 
      client := &http.Client{}     
 
@@ -90,12 +120,21 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
 	}
      }
 
+     if len(opt.PostData) >= 1 {
+     	values := make(url.Values)
+	for k,v := range opt.PostData {
+	    values.Set(k, v)
+	}
+     }
+
+
      tStart := time.Now().UnixNano()
      resp, _ := client.Do(req)     
 
 
      body, _ := ioutil.ReadAll(resp.Body)
      stats.BytesDownloaded += len(body)
+     body = nil
 
       switch {
             case resp.StatusCode >= 200 && resp.StatusCode < 300:
@@ -147,9 +186,10 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
 
 func main() {
 
-     var url string
+     var url, postDataFile string
+     var postData map[string]string
      var threads,totalTests, maxCores, rampFactor, rampTime int
-     var once [4]sync.Once //oncePN25, oncePN50, oncePN75, oncePN100 sync.Once
+     var once [4]sync.Once
 
 
      flag.StringVar(&url, "u", "http://www.somedomain.com", "Full url to test")
@@ -159,7 +199,10 @@ func main() {
      //flag.StringVar(&type, "t", "http", "Type of test to run (http/mc/redis/mysql)")
      flag.IntVar(&rampFactor, "rf", 1, "The number of thread to gradually ramp up by")
      flag.IntVar(&rampTime, "rt", 1, "The number of seconds to wait until the next ramp up")
+     flag.StringVar(&postDataFile, "pd", "", "Enable POST request and use specifid data file")
+
      flag.Parse()
+
 
 
      if maxCores > runtime.NumCPU() {
@@ -168,7 +211,21 @@ func main() {
         runtime.GOMAXPROCS(maxCores)
      }
 
-     //postDataFile := flag.String("d", "postdata.txt", "The filename of the POST data to send")
+     
+     if postDataFile == "" {
+     	options.Method = "GET"
+	postData = nil
+     } else {
+       options.Method = "POST"
+       postData = loadPostData(postDataFile)
+       if postData == nil {
+       	  options.Method = "GET"
+	  fmt.Println("Warning: Post data file "+postDataFile + " does not exist or has no data!")
+       }
+     }
+
+     fmt.Println(postData)
+     os.Exit(0)
 
      fmt.Println("\nRunning tests on "+url)
      
