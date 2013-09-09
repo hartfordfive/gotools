@@ -7,17 +7,15 @@ import(
 	"net/http"
 	"strconv"
 	"os"
-	//"http"
 	"io/ioutil"
-	//"url"
 	//"runtime"
 	"flag"
 	"time"
 	"sync"
-	//"strconv"
 	"runtime"
 	"sort"
 	"math"
+	"math/rand"
 	"strings"
 	"bufio"
 )
@@ -33,6 +31,9 @@ type BenchOptions struct{
      TimeBetween int
      TotalTests int
      Concurency int
+     UrlList []string
+     UrlListLen int
+     Url string
 }
 
 
@@ -46,6 +47,9 @@ type BenchStats struct{
      TestCount int
      TotalTime int64
      TestTime []int
+     AvgTime int
+     MedianTime int
+     UrlListTestCount map[string]int
      StatusCode map[string]int
      TestStart int64
      TestEnd int64
@@ -64,6 +68,25 @@ func FromNanoToMilli(ts int64) int{
      return int(ts/1000000)
 }
 
+func Readln(r *bufio.Reader) (string, error) {
+  var (isPrefix bool = true
+       err error = nil
+       line, ln []byte
+      )
+  for isPrefix && err == nil {
+      line, isPrefix, err = r.ReadLine()
+      ln = append(ln, line...)
+  }
+  return string(ln),err
+}
+
+
+func check(e error) {
+    if e != nil {
+        panic(e)
+    }
+}
+
 
 const debug bool = false
 
@@ -74,34 +97,145 @@ var options = BenchOptions{
     Timeout: 2,
     TimeBetween: 100,
     TotalTests: 30,
+    UrlList: nil,
 }
 
 
-func loadPostData(inFile string) map[string]string {
+/*
+	Should resemble:
+
+	Num CPU cores used: 1
+	Total URL variations: 12
+	Server type:  nginx/1.0.14
+	Total tests run:  9
+	Total bytes downloaded:  132095 (128 KB)
+	Total pass:  9
+	Total fail:  0
+	Total responses in 2xx: 9
+	Total responses in 3xx: 0
+	Total responses in 4xx: 0
+	Total responses in 5xx: 0
+	Shortest time:  26 ms
+	Longest time:  541 ms
+	Median time:  325 ms
+	Avg. time: 307 ms
+*/
+
+func dumpToReportFile(bs *BenchStats, bo *BenchOptions, fileNamePrefix string) int{
+
+     ts := int(time.Now().Unix())
+     y,m,d := time.Now().Date()
+
+    fh1, err1 := os.Create(fileNamePrefix + "_general_report_" + strconv.Itoa(y) + m.String() + strconv.Itoa(d) + "_" + strconv.Itoa(ts) + ".txt")
+    check(err1)
+    fh2, err2 := os.Create(fileNamePrefix + "_url_hit_report_" + strconv.Itoa(y) + m.String() + strconv.Itoa(d) + "_" + strconv.Itoa(ts) + ".txt")
+    check(err2)
+    fh3, err3 := os.Create(fileNamePrefix + "_time_report_" + strconv.Itoa(y) + m.String() + strconv.Itoa(d) + "_" + strconv.Itoa(ts) + ".txt")
+    check(err3)
+    defer fh1.Close()
+    defer fh2.Close()
+    defer fh3.Close()
+    
+
+    var out string
+    out = "\nStress Testing Report\n"
+    out += "Num CPU cores used: " + string(bo.Concurency) + "\n"
+
+    if bo.UrlListLen >= 1 {
+       out += "Total URL variations: " + string(bo.UrlListLen) + "\n"
+    } else {
+      out += "URL tested: " + bo.Url + "\n"
+    }
 
 
-     var pd map[string]string
+    out += "Server Type: " + string(bs.ServerType) + "\n\n"
+
+    out += "Total tests: " + string(bs.TestCount) + "\n"
+    out += "Total bytes downloaded: " + string(bs.BytesDownloaded) + "\n"
+    out += "Total passed: " + string(bs.NumPass) + "\n"
+    out += "Total failed: " + string(bs.NumFail) + "\n"
+    out += "\t2xx responses: " + string(bs.StatusCode["2xx"]) + "\n"
+    out += "\t3xx responses: " + string(bs.StatusCode["3xx"]) + "\n"
+    out += "\t4xx responses: " + string(bs.StatusCode["4xx"]) + "\n"
+    out += "\t5xx responses: " + string(bs.StatusCode["5xx"]) + "\n\n"
+
+    out += "Shortest time: " + string(bs.TestTime[0]) + "ms\n"
+    out += "Longest time: " + string(bs.TestTime[len(bs.TestTime)-1]) + "ms\n"
+    out += "Median time: " + string(bs.MedianTime) + "\n"
+    out += "Average time: " + string(bs.AvgTime) + "\n\n"
+    
+    //out += "" + string() + "\n"    
+    totalBytes := 0
 
 
-     fh, err := os.Open(inFile)
-     r := bufio.NewReader(fh)
-     s, e := Readln(r)
+    // --------------- Write the 1st report file
+    nb, _ := fh1.WriteString(out)
+    totalBytes += nb
+    fh1.Sync()
 
-     if e == nil {
+    // --------------- Write the 2nd report file with the number of hits to each url
+    out = "URL,Hits\n"
+    for k,v := range bs.UrlListTestCount {
+        out += k + "," + strconv.Itoa(v) + "\n"
+    }
+    nb, _ = fh2.WriteString(out)
+    totalBytes += nb
+    fh2.Sync()
 
-     	s, e = Readln(r)
-
-	parts := strings.SplitN(s, "=", 2)
-	fmt.Println(len(parts))
-	fmt.Println(parts)
-	if len(parts) == 2 {
-	    pd[parts[0]] = pd[parts[1]]	     
+    // --------------- Write the 3rd report file with the number of hits to each url
+    out = "";
+    for i := 0; i < bs.TestCount; i++ {
+        out += strconv.Itoa(bs.TestTime[i])
+	if i < (bs.TestCount-1) {
+	   out += ","
 	}
-	return pd
-     } 
+    }
+    nb, _ = fh3.WriteString(out)
+    totalBytes += nb
+    fh3.Sync()
 
+   
+
+    return totalBytes
+}
+
+
+
+
+func loadPostData(inFile string) map[string]string {
+    //var pd map[string]string
+    pd := make(map[string]string)
+    f, err := os.Open(inFile)
+    if err == nil {     
+        r := bufio.NewReader(f)
+	 for s, e := Readln(r); e == nil; s, e = Readln(r)  {
+             // Read a line from the file
+	     if s == "" || len(s) < 2 { goto goreturn }
+	     parts := strings.SplitN(s, "=", 2)	    
+             if len(parts) == 2 {
+		pd[strings.Trim(parts[0], " ")] = string(strings.Trim(parts[1], " "))
+             }
+	 }
+	 goreturn:
+	 return pd
+    }
      return nil
-     
+}
+
+
+func loadUrlList(inFile string) []string {
+    var ul []string  
+    f, err := os.Open(inFile)
+    if err == nil {
+        r := bufio.NewReader(f)
+         for s, e := Readln(r); e == nil; s, e = Readln(r)  {
+             // Read a line from the file
+             if s == "" { continue }
+             ul = append(ul, strings.Trim(s, " "))
+         }
+         return ul
+    }
+    return nil
 }
 
 
@@ -109,22 +243,33 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
 
      client := &http.Client{}     
 
-     //req, err := http.NewRequest(opt.Method, urlToCall, bytes.NewReader(postData))
-
-     req, _ := http.NewRequest(opt.Method, urlToCall, nil)    
-     req.Header.Add("User-Agent", opt.UserAgent)     
-
-     if len(opt.Header) >= 1 {
-	for k,v := range opt.Header {
-	    req.Header.Add(k, v)
-	}
+     values := make(url.Values)
+      if len(opt.PostData) >= 1 {
+        opt.Method = "POST"
+        for k,v := range opt.PostData {
+            values.Add(k, v)
+        }
      }
 
-     if len(opt.PostData) >= 1 {
-     	values := make(url.Values)
-	for k,v := range opt.PostData {
-	    values.Set(k, v)
+
+     var req *http.Request
+
+     if opt.Method == "POST" {
+          req, _ = http.NewRequest(opt.Method, urlToCall, strings.NewReader(values.Encode()) )
+      } else {
+       	 req, _ = http.NewRequest(opt.Method, urlToCall, nil)
+      }
+     
+     req.Header.Add("User-Agent", opt.UserAgent)
+     if len(opt.Header) >= 1 {
+     	if len(opt.PostData) >= 1 {
+	    req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 	}
+
+     	req.Header.Add("Connection", "Keep-alive")
+        for k,v := range opt.Header {
+            req.Header.Add(k, v)
+        }
      }
 
 
@@ -186,8 +331,7 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
 
 func main() {
 
-     var url, postDataFile string
-     var postData map[string]string
+     var url, postDataFile, urlList string
      var threads,totalTests, maxCores, rampFactor, rampTime int
      var once [4]sync.Once
 
@@ -200,6 +344,7 @@ func main() {
      flag.IntVar(&rampFactor, "rf", 1, "The number of thread to gradually ramp up by")
      flag.IntVar(&rampTime, "rt", 1, "The number of seconds to wait until the next ramp up")
      flag.StringVar(&postDataFile, "pd", "", "Enable POST request and use specifid data file")
+     flag.StringVar(&urlList, "l", "", "File containing the list of urls to test")
 
      flag.Parse()
 
@@ -214,31 +359,43 @@ func main() {
      
      if postDataFile == "" {
      	options.Method = "GET"
-	postData = nil
+	options.PostData = nil
+
+	if urlList != "" {
+	   options.UrlList = loadUrlList(urlList)
+	   options.UrlListLen = len(options.UrlList)
+	}
+
      } else {
        options.Method = "POST"
-       postData = loadPostData(postDataFile)
-       if postData == nil {
+       options.PostData = loadPostData(postDataFile)
+       fmt.Println("Post data:", options.PostData)
+       if options.PostData == nil {
        	  options.Method = "GET"
 	  fmt.Println("Warning: Post data file "+postDataFile + " does not exist or has no data!")
        }
      }
 
-     fmt.Println(postData)
-     os.Exit(0)
 
-     fmt.Println("\nRunning tests on "+url)
+     if options.UrlList != nil  {
+     	fmt.Println("\nRunning tests on", options.UrlListLen, "different URLS randomly")
+     } else {
+       fmt.Println("\nRunning tests on "+url)
+     }
      
      
      options.TotalTests = totalTests
      options.Concurency = threads
-
+     
      statusCodes := map[string]int{"2xx":0,"3xx":0,"4xx":0,"5xx":0}
-     stats := BenchStats{TestStart: time.Now().UnixNano(), BytesDownloaded: 0, ServerType: "", StatusCode: statusCodes}     
-
+     stats := BenchStats{TestStart: time.Now().UnixNano(), BytesDownloaded: 0, ServerType: "", StatusCode: statusCodes, UrlListTestCount: map[string]int{}}     
+     //if urlList != nil {
+     //	 stats.UrlListTestCount = make(map[string]int)
+     //}
 
      i := totalTests
      done := make(chan bool, totalTests)
+
 
      for {
      	 for j := 0; j < threads; j++ {	
@@ -258,7 +415,12 @@ func main() {
 	      goto breakout
 	    }
 	    go func() { 
+	       if options.UrlList != nil {
+	       	  rand.Seed(time.Now().UnixNano())
+	       	  url = options.UrlList[rand.Intn(options.UrlListLen)]
+	       }	   
 	       makeRequest(url, &options, &stats)
+	       stats.UrlListTestCount[url]++
 	       done <- true   
 	    }()	    
      	    i--
@@ -281,7 +443,13 @@ func main() {
 
      fmt.Println("\n-------------- Test Statistics ---------------")
      fmt.Println("Num CPU cores used:", maxCores)
-     fmt.Println("URL Requested: " + url)
+
+     if options.UrlList != nil {
+     	fmt.Println("Total URL variations:", options.UrlListLen)
+     } else {
+       fmt.Println("URL Requested: " + url)
+     }
+
      fmt.Println("Server type: ", stats.ServerType)
      fmt.Println("Total tests run: ", stats.TestCount)
      if stats.BytesDownloaded > 0 {
@@ -298,31 +466,28 @@ func main() {
      fmt.Println("Shortest time: ", stats.TestTime[0], "ms")
      fmt.Println("Longest time: ", stats.TestTime[len(stats.TestTime)-1], "ms")
 
-     var median,avg int
+     
      if totalTests%2==1 {
      	var index int = int(math.Ceil(float64(len(stats.TestTime)/2)))  
-     	median = int( stats.TestTime[index] )
+     	stats.MedianTime = int( stats.TestTime[index] )
      } else {
        var index int = totalTests/2
-       median = (stats.TestTime[index]+stats.TestTime[index+1])/2
+       stats.MedianTime = (stats.TestTime[index]+stats.TestTime[index+1])/2
      }
     
 
     for i := 0; i < len(stats.TestTime); i++ {
-    	avg += stats.TestTime[i]
+    	stats.AvgTime += stats.TestTime[i]
     }
-    avg = int(avg/stats.TestCount)
+    stats.AvgTime = int(stats.AvgTime/stats.TestCount)
     
 
-     fmt.Println("Median time: ", median, "ms")
-     fmt.Println("Avg. time:", avg, "ms")
-
+     fmt.Println("Median time: ", stats.MedianTime, "ms")
+     fmt.Println("Avg. time:", stats.AvgTime, "ms")
 
      fmt.Println("")
-
-     //fmt.Println("Test start: ", (stats.TestStart%1e6)/1e3)
-     //fmt.Println("Test end: ", (stats.TestEnd%1e6)/1e3)
-     //fmt.Println("Total time taken: ", ((stats.TestEnd-stats.TestStart)%1e6)/1e3)
+     dumpToReportFile(&stats, &options, "stress_test_")
+     fmt.Println("For more details, please view saved reports for more details.")
      fmt.Println("")
 
 
