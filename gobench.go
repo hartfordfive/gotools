@@ -18,6 +18,7 @@ import(
 	"math/rand"
 	"strings"
 	"bufio"
+	"reflect"
 )
 
 
@@ -34,6 +35,7 @@ type BenchOptions struct{
      UrlList []string
      UrlListLen int
      Url string
+     Cookies []http.Cookie
 }
 
 
@@ -101,36 +103,20 @@ var options = BenchOptions{
 }
 
 
-/*
-	Should resemble:
-
-	Num CPU cores used: 1
-	Total URL variations: 12
-	Server type:  nginx/1.0.14
-	Total tests run:  9
-	Total bytes downloaded:  132095 (128 KB)
-	Total pass:  9
-	Total fail:  0
-	Total responses in 2xx: 9
-	Total responses in 3xx: 0
-	Total responses in 4xx: 0
-	Total responses in 5xx: 0
-	Shortest time:  26 ms
-	Longest time:  541 ms
-	Median time:  325 ms
-	Avg. time: 307 ms
-*/
-
-func dumpToReportFile(bs *BenchStats, bo *BenchOptions, fileNamePrefix string) int{
+func dumpToReportFile(bs *BenchStats, bo *BenchOptions, fileNamePrefix string) []string{
 
      ts := int(time.Now().Unix())
      y,m,d := time.Now().Date()
 
-    fh1, err1 := os.Create(fileNamePrefix + "_general_report_" + strconv.Itoa(y) + m.String() + strconv.Itoa(d) + "_" + strconv.Itoa(ts) + ".txt")
+     files := []string{fileNamePrefix + "_general_report_" + strconv.Itoa(y) + m.String() + strconv.Itoa(d) + "_" + strconv.Itoa(ts) + ".txt",
+     	      			fileNamePrefix + "_url_hit_report_" + strconv.Itoa(y) + m.String() + strconv.Itoa(d) + "_" + strconv.Itoa(ts) + ".txt",
+				fileNamePrefix + "_time_report_" + strconv.Itoa(y) + m.String() + strconv.Itoa(d) + "_" + strconv.Itoa(ts) + ".txt"}
+
+    fh1, err1 := os.Create(files[0])
     check(err1)
-    fh2, err2 := os.Create(fileNamePrefix + "_url_hit_report_" + strconv.Itoa(y) + m.String() + strconv.Itoa(d) + "_" + strconv.Itoa(ts) + ".txt")
+    fh2, err2 := os.Create(files[1])
     check(err2)
-    fh3, err3 := os.Create(fileNamePrefix + "_time_report_" + strconv.Itoa(y) + m.String() + strconv.Itoa(d) + "_" + strconv.Itoa(ts) + ".txt")
+    fh3, err3 := os.Create(files[2])
     check(err3)
     defer fh1.Close()
     defer fh2.Close()
@@ -139,30 +125,30 @@ func dumpToReportFile(bs *BenchStats, bo *BenchOptions, fileNamePrefix string) i
 
     var out string
     out = "\nStress Testing Report\n"
-    out += "Num CPU cores used: " + string(bo.Concurency) + "\n"
+    out += "Num CPU cores used: " + strconv.Itoa(bo.Concurency) + "\n"
 
     if bo.UrlListLen >= 1 {
-       out += "Total URL variations: " + string(bo.UrlListLen) + "\n"
+       out += "Total URL variations: " + strconv.Itoa(bo.UrlListLen) + "\n"
     } else {
       out += "URL tested: " + bo.Url + "\n"
     }
 
 
-    out += "Server Type: " + string(bs.ServerType) + "\n\n"
+    out += "Server Type: " + bs.ServerType + "\n\n"
 
-    out += "Total tests: " + string(bs.TestCount) + "\n"
-    out += "Total bytes downloaded: " + string(bs.BytesDownloaded) + "\n"
-    out += "Total passed: " + string(bs.NumPass) + "\n"
-    out += "Total failed: " + string(bs.NumFail) + "\n"
-    out += "\t2xx responses: " + string(bs.StatusCode["2xx"]) + "\n"
-    out += "\t3xx responses: " + string(bs.StatusCode["3xx"]) + "\n"
-    out += "\t4xx responses: " + string(bs.StatusCode["4xx"]) + "\n"
-    out += "\t5xx responses: " + string(bs.StatusCode["5xx"]) + "\n\n"
+    out += "Total tests: " + strconv.Itoa(bs.TestCount) + "\n"
+    out += "Total bytes downloaded: " + strconv.Itoa(bs.BytesDownloaded) + "\n"
+    out += "Total passed: " + strconv.Itoa(bs.NumPass) + "\n"
+    out += "Total failed: " + strconv.Itoa(bs.NumFail) + "\n"
+    out += "\t2xx responses: " + strconv.Itoa(bs.StatusCode["2xx"]) + "\n"
+    out += "\t3xx responses: " + strconv.Itoa(bs.StatusCode["3xx"]) + "\n"
+    out += "\t4xx responses: " + strconv.Itoa(bs.StatusCode["4xx"]) + "\n"
+    out += "\t5xx responses: " + strconv.Itoa(bs.StatusCode["5xx"]) + "\n\n"
 
-    out += "Shortest time: " + string(bs.TestTime[0]) + "ms\n"
-    out += "Longest time: " + string(bs.TestTime[len(bs.TestTime)-1]) + "ms\n"
-    out += "Median time: " + string(bs.MedianTime) + "\n"
-    out += "Average time: " + string(bs.AvgTime) + "\n\n"
+    out += "Shortest time: " + strconv.Itoa(bs.TestTime[0]) + "ms\n"
+    out += "Longest time: " + strconv.Itoa(bs.TestTime[len(bs.TestTime)-1]) + "ms\n"
+    out += "Median time: " + strconv.Itoa(bs.MedianTime) + "\n"
+    out += "Average time: " + strconv.Itoa(bs.AvgTime) + "\n\n"
     
     //out += "" + string() + "\n"    
     totalBytes := 0
@@ -180,6 +166,7 @@ func dumpToReportFile(bs *BenchStats, bo *BenchOptions, fileNamePrefix string) i
     }
     nb, _ = fh2.WriteString(out)
     totalBytes += nb
+
     fh2.Sync()
 
     // --------------- Write the 3rd report file with the number of hits to each url
@@ -194,16 +181,62 @@ func dumpToReportFile(bs *BenchStats, bo *BenchOptions, fileNamePrefix string) i
     totalBytes += nb
     fh3.Sync()
 
-   
+   if totalBytes > 1 {
+      return files
+   }
 
-    return totalBytes
+   return nil
 }
 
 
+func loadCookieData(inFile string) []http.Cookie {
+
+     var cookies []http.Cookie
+
+     // Extract the valid properties of http.Cookie with Reflection
+     validCookieAttrs := map[string]int{"name": 1, "value": 1, "path": 1, "domain": 1, "expires": 1, "rawexpires": 1, "maxage": 1, "secure": 1, "httponly": 1, "raw": 1, "unparsed": 1,}
+     /* 
+    typ := reflect.TypeOf(&http.Cookie)
+     validCookieAttrs := make(map[string]int)
+     for i := 0; i < typ.NumField(); i++ {
+     	 p := typ.Field(i)
+       	 if !p.Anonymous {
+       	    validCookieAttrs[p.Name] = 1
+       	 }
+     }
+     */
+
+    f, err := os.Open(inFile)
+    if err == nil {
+        r := bufio.NewReader(f)
+         for s, e := Readln(r); e == nil; s, e = Readln(r)  {
+             if s == "" || len(strings.Trim(s," ")) < 2 { goto goreturn2 }
+
+             parts := strings.Split(s, "~")
+	     cookie := http.Cookie{}
+	      ps := reflect.ValueOf(&cookie) 
+	      s := ps.Elem() // Extract the struct itself
+
+	     for i := 0; i < len(parts); i++ {
+	     	 cookieParts := strings.Split(parts[i], "=")
+		 _,ok := validCookieAttrs[strings.Trim(cookieParts[0]," ")]
+		 if ok {		    
+		    f := s.FieldByName(strings.ToUpper(cookieParts[0][0:1])+cookieParts[0][1:])
+		    f.SetString(cookieParts[1])
+		 }	     	 
+	     }
+
+	     cookies = append(cookies, cookie)
+         }
+         goreturn2:
+         return cookies
+    }
+     return nil
+
+}
 
 
 func loadPostData(inFile string) map[string]string {
-    //var pd map[string]string
     pd := make(map[string]string)
     f, err := os.Open(inFile)
     if err == nil {     
@@ -259,6 +292,15 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
       } else {
        	 req, _ = http.NewRequest(opt.Method, urlToCall, nil)
       }
+
+     // Add all request cookies if any have been specified
+     numCookies := len(opt.Cookies)
+     if numCookies > 0 {
+        for i := 0; i < numCookies; i++ {
+                req.AddCookie(&opt.Cookies[i])
+        }
+     }
+
      
      req.Header.Add("User-Agent", opt.UserAgent)
      if len(opt.Header) >= 1 {
@@ -331,7 +373,7 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
 
 func main() {
 
-     var url, postDataFile, urlList string
+     var url, postDataFile, urlList, cookieFile string
      var threads,totalTests, maxCores, rampFactor, rampTime int
      var once [4]sync.Once
 
@@ -345,6 +387,7 @@ func main() {
      flag.IntVar(&rampTime, "rt", 1, "The number of seconds to wait until the next ramp up")
      flag.StringVar(&postDataFile, "pd", "", "Enable POST request and use specifid data file")
      flag.StringVar(&urlList, "l", "", "File containing the list of urls to test")
+     flag.StringVar(&cookieFile, "cf", "", "File containing the cookies to send for a given request")
 
      flag.Parse()
 
@@ -374,6 +417,10 @@ func main() {
        	  options.Method = "GET"
 	  fmt.Println("Warning: Post data file "+postDataFile + " does not exist or has no data!")
        }
+     }
+
+     if cookieFile != "" {
+     	options.Cookies = loadCookieData(cookieFile)	
      }
 
 
@@ -486,8 +533,11 @@ func main() {
      fmt.Println("Avg. time:", stats.AvgTime, "ms")
 
      fmt.Println("")
-     dumpToReportFile(&stats, &options, "stress_test_")
-     fmt.Println("For more details, please view saved reports for more details.")
+     files := dumpToReportFile(&stats, &options, "stress_test")
+     fmt.Println("For more details, please view the following saved reports:")
+     for i := 0; i < len(files); i++ {
+     	 fmt.Println("\t"+files[i])
+     }
      fmt.Println("")
 
 
