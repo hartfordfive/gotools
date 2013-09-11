@@ -1,6 +1,5 @@
 package main
 
-
 import(
 	"fmt"
 	"net/url"
@@ -8,7 +7,6 @@ import(
 	"strconv"
 	"os"
 	"io/ioutil"
-	//"runtime"
 	"flag"
 	"time"
 	"sync"
@@ -21,29 +19,26 @@ import(
 	"reflect"
 )
 
-
-
 type BenchOptions struct{
      Method string
      UserAgent string
      Header map[string]string
      Timeout int
      PostData map[string]string
-     TimeBetween int
+     TimeBetween int64
      TotalTests int
      Concurency int
      UrlList []string
      UrlListLen int
      Url string
      Cookies []http.Cookie
+     UserAgents []string
 }
-
 
 type BenchTest struct{
      TimeTaken int64
      StatusCode int
 }
-
 
 type BenchStats struct{
      TestCount int
@@ -92,14 +87,14 @@ func check(e error) {
 
 const debug bool = false
 
-
 var options = BenchOptions{
     Method: "GET",
     UserAgent: "Mozilla/5.0 GoBench",
     Timeout: 2,
-    TimeBetween: 100,
+    TimeBetween: 1000,
     TotalTests: 30,
     UrlList: nil,
+    UserAgents: nil,
 }
 
 
@@ -145,10 +140,10 @@ func dumpToReportFile(bs *BenchStats, bo *BenchOptions, fileNamePrefix string) [
     out += "\t4xx responses: " + strconv.Itoa(bs.StatusCode["4xx"]) + "\n"
     out += "\t5xx responses: " + strconv.Itoa(bs.StatusCode["5xx"]) + "\n\n"
 
-    out += "Shortest time: " + strconv.Itoa(bs.TestTime[0]) + "ms\n"
-    out += "Longest time: " + strconv.Itoa(bs.TestTime[len(bs.TestTime)-1]) + "ms\n"
-    out += "Median time: " + strconv.Itoa(bs.MedianTime) + "\n"
-    out += "Average time: " + strconv.Itoa(bs.AvgTime) + "\n\n"
+    out += "Shortest time: " + strconv.Itoa(bs.TestTime[0]) + " ms\n"
+    out += "Longest time: " + strconv.Itoa(bs.TestTime[len(bs.TestTime)-1]) + " ms\n"
+    out += "Median time: " + strconv.Itoa(bs.MedianTime) + " ms\n"
+    out += "Average time: " + strconv.Itoa(bs.AvgTime) + " ms\n\n"
     
     //out += "" + string() + "\n"    
     totalBytes := 0
@@ -195,16 +190,6 @@ func loadCookieData(inFile string) []http.Cookie {
 
      // Extract the valid properties of http.Cookie with Reflection
      validCookieAttrs := map[string]int{"name": 1, "value": 1, "path": 1, "domain": 1, "expires": 1, "rawexpires": 1, "maxage": 1, "secure": 1, "httponly": 1, "raw": 1, "unparsed": 1,}
-     /* 
-    typ := reflect.TypeOf(&http.Cookie)
-     validCookieAttrs := make(map[string]int)
-     for i := 0; i < typ.NumField(); i++ {
-     	 p := typ.Field(i)
-       	 if !p.Anonymous {
-       	    validCookieAttrs[p.Name] = 1
-       	 }
-     }
-     */
 
     f, err := os.Open(inFile)
     if err == nil {
@@ -271,6 +256,21 @@ func loadUrlList(inFile string) []string {
     return nil
 }
 
+func loadFileToArray(inFile string) []string {
+    var list []string
+    f, err := os.Open(inFile)
+    if err == nil {
+        r := bufio.NewReader(f)
+         for s, e := Readln(r); e == nil; s, e = Readln(r)  {
+             // Read a line from the file
+             if s == "" { continue }
+             list = append(list, strings.Trim(s, " "))
+         }
+         return list
+    }
+    return nil
+}
+
 
 func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *sync.WaitGroup) {
 
@@ -283,7 +283,6 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
             values.Add(k, v)
         }
      }
-
 
      var req *http.Request
 
@@ -300,24 +299,27 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
                 req.AddCookie(&opt.Cookies[i])
         }
      }
+    
+     if opt.UserAgents != nil {
+     	rand.Seed(time.Now().UnixNano())
+	uaListLen := len(options.UserAgents)
+        req.Header.Add("User-Agent", options.UserAgents[rand.Intn(uaListLen)])
+     } else {
+       req.Header.Add("User-Agent", opt.UserAgent)
+     }
 
-     
-     req.Header.Add("User-Agent", opt.UserAgent)
      if len(opt.Header) >= 1 {
      	if len(opt.PostData) >= 1 {
 	    req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 	}
-
      	req.Header.Add("Connection", "Keep-alive")
         for k,v := range opt.Header {
             req.Header.Add(k, v)
         }
      }
 
-
      tStart := time.Now().UnixNano()
      resp, _ := client.Do(req)     
-
 
      body, _ := ioutil.ReadAll(resp.Body)
      stats.BytesDownloaded += len(body)
@@ -350,20 +352,8 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
      stats.TestCount++
      stats.NumPass++
 
-
-	if resp.Header.Get("Server") != "" {
+     if resp.Header.Get("Server") != "" {
 	   stats.ServerType = resp.Header.Get("Server")
-	}
- 
-     //fmt.Println(resp.Header)
-
-     //fmt.Println("Status Code:", resp.StatusCode)
-     //fmt.Println("\x0cOn", ((stats.TestCount*100)/opt.TotalTests), "%")
-     //fmt.Println(((stats.TestCount*100)/opt.TotalTests), "% complete")
-     
-
-     if debug {
-     	fmt.Println("\tRequest took ", (tEnd-tStart), "ns to run")
      }
 
 }
@@ -373,42 +363,40 @@ func makeRequest(urlToCall string, opt *BenchOptions, stats *BenchStats) { //w *
 
 func main() {
 
-     var url, postDataFile, urlList, cookieFile string
-     var threads,totalTests, maxCores, rampFactor, rampTime int
+     var url, postDataFile, urlList, uaList, cookieFile string
+     var concurency, totalTests, maxCores, rampTime, timeWait int
      var once [4]sync.Once
 
 
      flag.StringVar(&url, "u", "http://www.somedomain.com", "Full url to test")
-     flag.IntVar(&threads, "c", 1, "Number of threads to run concurrently")
+     flag.IntVar(&concurency, "c", 1, "Number of requests to run concurrently")
      flag.IntVar(&maxCores, "p", 1, "Number of processor cores to use")
      flag.IntVar(&totalTests, "m", 25, "Total number of tests to run")
-     //flag.StringVar(&type, "t", "http", "Type of test to run (http/mc/redis/mysql)")
-     flag.IntVar(&rampFactor, "rf", 1, "The number of thread to gradually ramp up by")
-     flag.IntVar(&rampTime, "rt", 1, "The number of seconds to wait until the next ramp up")
+     //flag.IntVar(&rampThreads, "rf", 1, "The number of thread to gradually ramp up by")
+     flag.IntVar(&rampTime, "rt", 1, "The number of milliseconds until ramped up to specified concurency")
+     flag.IntVar(&timeWait, "tw", 1000, "The number of milliseconds to wait betweeen concurent test runs")
      flag.StringVar(&postDataFile, "pd", "", "Enable POST request and use specifid data file")
      flag.StringVar(&urlList, "l", "", "File containing the list of urls to test")
      flag.StringVar(&cookieFile, "cf", "", "File containing the cookies to send for a given request")
+     flag.StringVar(&uaList, "ul", "", "File containing the list of user-agents to use for each request at random.")
+     
 
      flag.Parse()
-
-
 
      if maxCores > runtime.NumCPU() {
      	runtime.GOMAXPROCS(runtime.NumCPU())
      } else {
         runtime.GOMAXPROCS(maxCores)
      }
-
      
      if postDataFile == "" {
      	options.Method = "GET"
 	options.PostData = nil
-
 	if urlList != "" {
-	   options.UrlList = loadUrlList(urlList)
+	   //options.UrlList = loadUrlList(urlList)
+	   options.UrlList = loadFileToArray(urlList)
 	   options.UrlListLen = len(options.UrlList)
 	}
-
      } else {
        options.Method = "POST"
        options.PostData = loadPostData(postDataFile)
@@ -423,44 +411,49 @@ func main() {
      	options.Cookies = loadCookieData(cookieFile)	
      }
 
-
      if options.UrlList != nil  {
      	fmt.Println("\nRunning tests on", options.UrlListLen, "different URLS randomly")
      } else {
        fmt.Println("\nRunning tests on "+url)
      }
-     
+
+     if uaList != "" {
+           options.UserAgents = loadFileToArray(uaList)
+     }
+
      
      options.TotalTests = totalTests
-     options.Concurency = threads
+     options.Concurency = concurency
      
      statusCodes := map[string]int{"2xx":0,"3xx":0,"4xx":0,"5xx":0}
      stats := BenchStats{TestStart: time.Now().UnixNano(), BytesDownloaded: 0, ServerType: "", StatusCode: statusCodes, UrlListTestCount: map[string]int{}}     
-     //if urlList != nil {
-     //	 stats.UrlListTestCount = make(map[string]int)
-     //}
 
      i := totalTests
      done := make(chan bool, totalTests)
 
+     if rampTime > 0 && concurency >= 1{
+     	
+	
+     }
 
      for {
-     	 for j := 0; j < threads; j++ {	
+     	 for j := 0; j < concurency; j++ {	
 
 	     progress := (stats.TestCount*100)/totalTests
-                    switch {
-                       case progress >= 25 && progress < 50:
-                            once[0].Do(func() { fmt.Println("25% Completed..") })
-                       case progress >= 50 && progress < 75:
-                            once[1].Do(func() { fmt.Println("50% Completed..") })
-                       case progress >= 75 && progress < 100:
-                            once[2].Do(func() { fmt.Println("75% Completed..") })           
-                    }
+             switch {
+	     	    case progress >= 25 && progress < 50:
+                         once[0].Do(func() { fmt.Println("25% Completed..") })
+                    case progress >= 50 && progress < 75:
+                         once[1].Do(func() { fmt.Println("50% Completed..") })
+                    case progress >= 75 && progress < 100:
+                         once[2].Do(func() { fmt.Println("75% Completed..") })           
+             }
 
 	    if i < 1 {
 	      once[3].Do(func() { fmt.Println("100% Completed..") })
 	      goto breakout
 	    }
+
 	    go func() { 
 	       if options.UrlList != nil {
 	       	  rand.Seed(time.Now().UnixNano())
@@ -473,11 +466,11 @@ func main() {
      	    i--
 	 } 
 	 	 
-	 if options.TimeBetween > 0 {
-	    //time.Sleep(int64(options.TimeBetween) * int64(time.Millisecond))
-	    //time.Sleep(options.TimeBetween * (1000*1000))
-	    time.Sleep(1000 * time.Millisecond)
-	 } 
+	 if timeWait > 0 {
+	    time.Sleep(time.Duration(timeWait)*time.Millisecond)
+	 } else {
+	   time.Sleep(time.Duration(options.TimeBetween)*time.Millisecond)
+	 }
 	 
 
      }
@@ -486,7 +479,6 @@ func main() {
 
      stats.TestEnd = time.Now().UnixNano()
      stats.TestTime = SortResponseTimes(stats.TestTime)
-
 
      fmt.Println("\n-------------- Test Statistics ---------------")
      fmt.Println("Num CPU cores used:", maxCores)
